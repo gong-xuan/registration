@@ -12,3 +12,5 @@ python mainvm.py --debug --dataset prostate
 #python mainvm.py --bsize 96 --gpu 0,1 --logfile tloss0 --weight '1,0,0.01' --debug
 #python mainvm.py --bsize 1 --gpu 0,1,2,3 --dataset prostate --logfile pros --num_workers 0 --trpercent 0.01 --debug
 #python mainvm.py --bsize 12 --gpu 0,1,2,3 --dataset prostate --logfile pros_feat --feat --epoch 200
+
+git add . && git commit -m "initial commit"
