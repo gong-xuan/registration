@@ -14,20 +14,20 @@ sys.path.append('../')
 import losses
 from dataset.transform import random_transform, random_transform_elastic
 
-def NIISplit(img_path, label_path, dataset = 'hippocampus', mode = 'vm', train = 0, trainseg=0, valseg = 0, valreg = 0, 
+def NIISplit(img_path, label_path, pad_size, dataset = 'hippocampus', mode = 'vm', train = 0, trainseg=0, valseg = 0, valreg = 0, 
         regmode = 'sample', tr_percent=1, bootstrap_prop=1, divide =None):
     #img_path = os.path.join(datapath, 'data')
     #label_path = os.path.join(datapath, 'labels')
     img_path = os.path.expanduser(img_path)
     label_path = os.path.expanduser(label_path)
 
-    if dataset=='hippocampus':
+    if dataset=='hippocampus': #26
         test_index = [349, 251, 50, 363, 197, 96, 334, 345, 355, 298, 232, 49, 205, \
             338, 101, 38, 311, 223, 390, 204, 221, 350, 180, 276, 177, 124]
-        pad_size = (48,64,48)
-    elif dataset == 'prostate':
+    elif dataset == 'prostate': #8
         test_index = [16, 4, 32, 20, 43, 18, 6, 1]
-        pad_size = (240,240,96)
+    elif dataset == 'liver': #16%bs=0 if not 0 should le n_gpu
+        test_index = [10, 33, 41, 67, 98, 123, 114, 79, 82, 55, 38, 26, 5, 101, 130, 18]
     # 
     test_filenames = []
     train_filenames = []
@@ -41,7 +41,9 @@ def NIISplit(img_path, label_path, dataset = 'hippocampus', mode = 'vm', train =
             test_filenames.append(file)
         else:
             train_filenames.append(file)
-    # import ipdb; ipdb.set_trace()
+    if tr_percent<1:
+        n_tr = int(len(train_filenames)*tr_percent)
+        train_filenames = train_filenames[:n_tr]
     if trainseg:
         train_seg_data = NIIDatasetTestSeg(imgpath=img_path, labelpath =label_path, 
             test_names=train_filenames, train_names=train_filenames, padsize = pad_size)
@@ -64,18 +66,18 @@ def NIISplit(img_path, label_path, dataset = 'hippocampus', mode = 'vm', train =
         # import ipdb; ipdb.set_trace()
         
         train_data = NIIDatasetPaired(imgpath=img_path, labelpath =label_path, divide = divide,
-            filenames = train_filenames, mode = mode, tr_percent=tr_percent, padsize = pad_size)
+            filenames = train_filenames, mode = mode, tr_percent=1, padsize = pad_size)
     
     
     return train_data, val_seg_data, val_reg_data
   
 
-def MSD_dataloader(dataset, bsize, num_workers, datapath='~/data/MSD', tr_percent=1, testseg=1, testreg=0):
+def MSD_dataloader(dataset, bsize, pad_size, num_workers, datapath='~/data/MSD', tr_percent=1, testseg=1, testreg=0):
     imgpath = f'{datapath}/{dataset}/all/data'
     labelpath =  f'{datapath}/{dataset}/all/labels'
     
     train_data, val_seg_data, val_reg_data = NIISplit(
-        imgpath, labelpath, mode = 'vm', train =1, valseg=testseg, valreg=testreg, divide = None,
+        imgpath, labelpath, pad_size, mode = 'vm', train =1, valseg=testseg, valreg=testreg, divide = None,
         tr_percent = tr_percent, dataset = dataset, bootstrap_prop=1)
     # import ipdb; ipdb.set_trace()
     logging.info(f'Train pairs:{len(train_data)}')
@@ -317,6 +319,7 @@ def pad(x, shape):
     return new_x, nopad
 
 def normalize(x):
+    pos = np.all(x>=0)
     mean = np.mean(x)
     std = np.std(x, ddof=1)
     #std_arr = np.sqrt(np.abs(x-mean)/x.size)
@@ -325,7 +328,12 @@ def normalize(x):
     y = np.clip(x, minp, maxp)
     #import ipdb; ipdb.set_trace()
     #linear transform to [0,1]
-    z = (y-y.min())/y.max()
+    if pos:
+        z = (y-y.min())/y.max()
+    else:
+        z = y-y.min()
+        z = z/z.max()
+
     return z
 
 def preprocess(name, padsize = (48,64,48), isimg=False): #resample=[1,1,1], 
@@ -335,7 +343,3 @@ def preprocess(name, padsize = (48,64,48), isimg=False): #resample=[1,1,1],
     image, nopad = pad(image, padsize)
     return image, nopad
 
-
-if __name__ == "__main__":
-    datapath = '~/data/hippocampus/all'
-    HippoSplit(datapath)

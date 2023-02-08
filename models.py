@@ -6,16 +6,22 @@ from losses import *
 import logging
 
 class SpatialTransformer(nn.Module):
-    def __init__(self, size, mode='bilinear'):
+    def __init__(self, size, mode='bilinear'):#nearest??
         super(SpatialTransformer, self).__init__()
-        zero = torch.cat([torch.eye(3), torch.zeros([3,1])], 1)[None]
-        self.meshgrid = nn.Parameter(nnf.affine_grid(zero, [1,1,*size], align_corners=False), requires_grad=False)
+        self.zero = torch.cat([torch.eye(3), torch.zeros([3,1])], 1)[None]
+        self.meshgrid = nn.Parameter(nnf.affine_grid(self.zero, [1,1,*size], align_corners=False), requires_grad=False)
         self.mode = mode
 
-    def forward(self, src, flow):
+    def forward(self, src, flow, size=None):
+        if size==None:
+            meshgrid = self.meshgrid
+        else:
+            meshgrid = nn.Parameter(nnf.affine_grid(self.zero, [1,1,*size], align_corners=False), requires_grad=False).to(flow.device)
         flow = flow.permute(0, 2, 3, 4, 1)
-        new_locs = self.meshgrid + flow
+        # print(meshgrid.shape, flow.shape)
+        new_locs = meshgrid + flow
         self.new_locs = new_locs
+        # import ipdb; ipdb.set_trace()
         return nnf.grid_sample(src, new_locs, mode=self.mode, align_corners=False)
 
 class conv_block(nn.Module):
@@ -59,7 +65,7 @@ class unet_core(nn.Module):
     [unet_core] is a class representing the U-Net implementation that takes in
     a fixed image and a moving image and outputs a flow-field
     """
-    def __init__(self, dim=3, enc_nf=[16, 32, 32, 32], dec_nf= [32, 32, 32, 32, 32, 16, 16], droprate=0, input_ch=2):
+    def __init__(self, dim=3, enc_nf=[16, 32, 32, 32], dec_nf= [32, 32, 32, 32, 32, 16, 16], downsample=0, input_ch=2):
         """
         Instiatiate UNet model
             :param dim: dimension of the image passed into the net
@@ -69,7 +75,7 @@ class unet_core(nn.Module):
                             layers
         """
         super(unet_core, self).__init__()
-
+        self.downsample = downsample
         # Encoder functions
         self.enc = nn.ModuleList()
         for i in range(len(enc_nf)):
@@ -91,10 +97,9 @@ class unet_core(nn.Module):
         self.dec.append(conv_block(dim, dec_nf[3], dec_nf[4]))  # 5
         self.dec.append(conv_block(dim, dec_nf[4] + input_ch, dec_nf[5], 1)) # 6
         
-
+        self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
         self.vm2_conv = conv_block(dim, dec_nf[5], dec_nf[6]) 
  
-        self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
 
     def forward(self, x):
         """
@@ -108,7 +113,6 @@ class unet_core(nn.Module):
             layer = self.enc[i]
             y = layer(y)
             # logging.info(y.size())
-            # import ipdb; ipdb.set_trace()
             if i%2==0:
                 x_enc.append(y)
             # logging.info(layer)
@@ -118,24 +122,32 @@ class unet_core(nn.Module):
         # import ipdb; ipdb.set_trace()
         # y=self.drop(y)
         concat_cnt = 0
+        upsample= 4-self.downsample
+        upsample_cnt = 0
+        # import ipdb; ipdb.set_trace()
         for i in range(len(self.dec)-1):
             layer = self.dec[i]
             y = layer(y)
-            concat = (i%2==0) and (concat_cnt<3)
-            if concat:
+            # print(y.shape)
+            if (i%2==0) and (upsample_cnt==upsample):#valid for up_cnt=0,1,2,3
+                # import ipdb; ipdb.set_trace()
+                return y
+            if (i%2==0) and (concat_cnt<3):
                 y = self.upsample(y)
                 # logging.info(i, y.size(), x_enc[-(i+2)].size())
                 y = torch.cat([y, x_enc[-(concat_cnt+2)]], dim=1) #(-2,-3,-4)
                 concat_cnt += 1
+                upsample_cnt += 1
+                # print(upsample_cnt)
             # Two convs at full_size/2 res
             # y = layer(y)
             # y = self.dec[8](y)
             # y = self.dec[9](y)
-
+            
         # Upsample to full res, concatenate and conv
+        
         y = self.upsample(y)
         y = torch.cat([y, x_enc[0]], dim=1)
-        # y = self.dec[-2](y)
         y = self.dec[-1](y)
         # Extra conv for vm2
         y = self.vm2_conv(y)
@@ -144,7 +156,10 @@ class unet_core(nn.Module):
 
 class RegNet(nn.Module):
     def __init__(self, size, dim=3, winsize=7,
-                enc_nf=[16, 32, 32, 32], dec_nf= [32, 32, 32, 32, 32, 16, 16], n_class=29):
+                enc_nf=[16, 32, 32, 32], 
+                dec_nf= [32, 32, 32, 32, 32, 16, 16], 
+                n_class=29,
+                feat=False):
         super(RegNet, self).__init__()
         self.unet = unet_core(dim=dim, enc_nf = enc_nf, dec_nf = dec_nf)
         if(dim == 3):
@@ -156,19 +171,18 @@ class RegNet(nn.Module):
         self.winsize = winsize
         self.n_class = n_class
         #feat
-        # self.feat_conv= conv_fn(dec_nf[-1]+num_classes, num_classes, kernel_size = 3, stride = 1, padding = 1)
-        # self.softmax = nn.Softmax(dim=1)
+        self.feat = feat
+        self.feat_conv= conv_fn(dec_nf[-1]+n_class, n_class, kernel_size = 3, stride = 1, padding = 1)
+        self.softmax = nn.Softmax(dim=1)
         # self.drop = nn.Dropout(droprate)
 
-    def eval_dice(self, fixed_label, moving_label, flow, fix_nopad=None):
-        warped_seg= self.spatial_transformer_network(moving_label, flow)
-        #
-        if fix_nopad is not None:
-            fixed_label = fix_nopad*fixed_label
-            moving_label = fix_nopad*moving_label
+
+
+    def eval_dice_warped(self, fixed_label, warped_seg):
         warplabel = torch.max(warped_seg.detach(),dim=1)[1]
-        warpseg = torch.nn.functional.one_hot(warplabel.long(), num_classes=self.n_class).float().permute(0,4,1,2,3)
-        dice = dice_onehot(warpseg[:,1:,:,:,:].detach(), fixed_label[:,1:,:,:,:].detach())#disregard background
+        # import ipdb; ipdb.set_trace()
+        warped_label = torch.nn.functional.one_hot(warplabel.long(), num_classes=self.n_class).float().permute(0,4,1,2,3)
+        dice = dice_onehot(warped_label[:,1:,:,:,:].detach(), fixed_label[:,1:,:,:,:].detach())#disregard background
         return dice
 
     def forward(self, fix, moving, fix_label, moving_label, fix_nopad=None, rtloss=True, eval=True):
@@ -178,6 +192,12 @@ class RegNet(nn.Module):
 
         if rtloss:
             warp = self.spatial_transformer_network(moving, flow)
+            warped_seg = self.spatial_transformer_network(moving_label, flow)
+            if self.feat:
+                out_cat = torch.cat((warped_seg,unet_out), 1)
+                out_cat = self.feat_conv(out_cat)
+                warped_seg = self.softmax(out_cat)
+            #loss
             if fix_nopad is not None:
                 fix = fix*fix_nopad
                 warp = warp*fix_nopad
@@ -187,20 +207,35 @@ class RegNet(nn.Module):
                 mask = fix_nopad.bool()
                 sim_mask = sim_mask*mask
             sloss = sim_loss[sim_mask].mean()
+            ##seg_loss
+            if fix_nopad is not None:
+                fix_label = fix_label*fix_nopad
+                warped_seg = warped_seg*fix_nopad
+            warped_seg = torch.clamp(warped_seg, min=0, max=1)#required??
+            seg_loss = tversky_loss(warped_seg, fix_label)
             
             if eval:
-                dice = self.eval_dice(fix_label, moving_label, flow)
-                return sloss, grad_loss, dice
+                dice = self.eval_dice_warped(fix_label, warped_seg)
+                return sloss, grad_loss, seg_loss, dice
             else:
-                return sloss, grad_loss
+                return sloss, grad_loss, seg_loss
         else:
             if eval:
-                dice = self.eval_dice(fix_label, moving_label, flow)
+                warped_seg= self.spatial_transformer_network(moving_label, flow)
+                if self.feat:
+                    out_cat = torch.cat((warped_seg,unet_out), 1)
+                    out_cat = self.feat_conv(out_cat)
+                    warped_seg = self.softmax(out_cat)
+                if fix_nopad is not None:
+                    fix_label = fix_nopad*fix_label
+                    warped_seg = fix_nopad*warped_seg
+                
+                dice = self.eval_dice_warped(fix_label, warped_seg)
                 return dice
             else:
                 return flow
 
-
+"""
 class RegUncertNet(RegNet):
     def __init__(self, size, dim=3, winsize=7,
                 enc_nf=[16, 32, 32, 32], dec_nf= [32, 32, 32, 32, 32, 16, 16], n_class=29, grad_weight=0):
@@ -259,3 +294,4 @@ class RegUncertNet(RegNet):
                 warplabel = torch.max(warped_seg.detach(),dim=1)[1]
                 warpseg = torch.nn.functional.one_hot(warplabel.long(), num_classes=self.n_class).float().permute(0,4,1,2,3)
                 return warpseg, flow, flow_var
+"""

@@ -48,8 +48,7 @@ def dice_onehot(vol1, vol2):
     return division.mean()
 
     
-def D(pred, sg, num_classes=3):
-    
+def tversky_loss(pred, sg, num_classes=3):
     #sg_onehot = F.one_hot(sg.long(), num_classes=3).float().permute(0,4,1,2,3)
     numerator = 2*pred*sg
     denominator = pred + sg
@@ -60,8 +59,8 @@ def D(pred, sg, num_classes=3):
     return division.mean()
 
 
-def tversky_loss(s_0, sg_0, s_1, sg_1):
-    return D(s_0, sg_0), D(s_1, sg_1)
+# def tversky_loss(s_0, sg_0, s_1, sg_1):
+#     return D(s_0, sg_0), D(s_1, sg_1)
 
 
 def gradient_loss(s, penalty='l2', keepdim=False):
