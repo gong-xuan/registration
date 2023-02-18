@@ -153,6 +153,7 @@ class unet_core(nn.Module):
         y = self.vm2_conv(y)
 
         return y
+    
 
 class RegNet(nn.Module):
     def __init__(self, size, dim=3, winsize=7,

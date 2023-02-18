@@ -28,7 +28,13 @@ def NIISplit(img_path, label_path, pad_size, dataset = 'hippocampus', mode = 'vm
         test_index = [16, 4, 32, 20, 43, 18, 6, 1]
     elif dataset == 'liver': #16%bs=0 if not 0 should le n_gpu
         test_index = [10, 33, 41, 67, 98, 123, 114, 79, 82, 55, 38, 26, 5, 101, 130, 18]
-    # 
+    elif dataset == 'heart':
+        test_index = [22, 11, 30]
+    elif dataset == 'spleen':
+        test_index = [19, 52, 17, 33, 46, 13, 44]
+    elif dataset == 'colon':
+        test_index = [1, 9, 32, 50, 74, 98, 99, 124, 154, 165, 181, 205, 212, 219, 99]
+        
     test_filenames = []
     train_filenames = []
     for file in os.listdir(img_path):
@@ -340,6 +346,7 @@ def preprocess(name, padsize = (48,64,48), isimg=False): #resample=[1,1,1],
     image = np.array(nibabel.load(name).get_fdata())
     if isimg:
         image = normalize(image)
+    # if image.shape != tuple(padsize) :
     image, nopad = pad(image, padsize)
     return image, nopad
 

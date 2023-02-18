@@ -42,8 +42,18 @@ def dice_onehot(vol1, vol2):
 
     # return dicem
     numerator = 2*vol1*vol2
+    # print(vol1.count_nonzero())
+    # print(vol1.count_nonzero(dim=2))
+    # print(vol2.count_nonzero())
+    # print(vol2.count_nonzero(dim=2))
+    # print(numerator.count_nonzero())
     denominator = vol1 + vol2
+    # print(denominator.count_nonzero())
+    # print(numerator.sum(dim=[0,2,3,4]))
+    # print(denominator.sum(dim=[0,2,3,4]))
     division = (numerator.sum(dim=[0,2,3,4]) / denominator.sum(dim=[0,2,3,4]))
+    # if division ==  0.0:
+        # print("Stop here")
     # import ipdb; ipdb.set_trace()
     return division.mean()
 

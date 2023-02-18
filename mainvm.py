@@ -13,14 +13,16 @@ from dataset import candi, msd, brats, chaos
 from torch.optim.lr_scheduler import StepLR
 from train import TrainModel
 from models import RegNet
-from raft import RaftRegNet
-from msraft import MsRaftRegNet
-from tsraft import TsRaftRegNet
+# from raft import RaftRegNet
+# from msraft import MsRaftRegNet
+# from tsraft import TsRaftRegNet
+import math
 
 
 CANDI_PATH = '/data_local/xuangong/data/CANDI_split'
-MSD_PATH = '/a2il/data/MedReg/MSD'
-BraTS_PATH = '/data_local/xuangong/data/BraTS'
+# MSD_PATH = '/a2il/data/MedReg/MSD'
+MSD_PATH = '/a2il/data/mbhosale/MSD_resampled/'
+# BraTS_PATH = '/data_local/xuangong/data/BraTS'
 CHAOS_PATH = r'/data_local/mbhosale/CHAOS/'
 
 def get_args():
@@ -58,8 +60,16 @@ def get_args():
     parser.add_argument('--eval', type=int, default=1)
     return parser.parse_args()
 
+def correct_padsize(pad_size, downsample_rate):
+    if pad_size[-1]%downsample_rate != 0:               
+            orig_size = pad_size
+            c_dim = orig_size[-1]
+            pad_size[-1] += abs(c_dim - (math.ceil(c_dim/downsample_rate)*downsample_rate))
+    return pad_size
+    
 if __name__ == "__main__":
     args = get_args()
+    downsample_rate = 16
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     args.weight = [float(i) for i in args.weight.split(',')]
     
@@ -89,18 +99,36 @@ if __name__ == "__main__":
         window_r = 7
         NUM_CLASS = 29
         train_dataloader, test_dataloader = candi.CANDI_dataloader(args, datapath=CANDI_PATH, size=pad_size)
-    elif args.dataset in ['prostate', 'hippocampus', 'liver']:
-        NUM_CLASS = 3
+    elif args.dataset in ['prostate', 'hippocampus', 'liver', 'heart', 'spleen', 'colon']:
         if args.dataset=='prostate':
+            NUM_CLASS = 3
             window_r = 9
             pad_size = [240,240,96] 
         elif args.dataset == 'hippocampus': 
+            NUM_CLASS = 3
             window_r = 5
             pad_size = [48,64,48]
         elif args.dataset == 'liver':
-            window_r = 15
+            NUM_CLASS = 3
+            window_r = 9
             pad_size = [256, 256, 128]
-        train_dataloader, test_dataloader, _= msd.MSD_dataloader(args.dataset, args.bsize, pad_size, args.num_workers, datapath=MSD_PATH, tr_percent=0.1, testseg=0, testreg=0)
+        elif args.dataset == 'heart':
+            NUM_CLASS = 2
+            window_r = 5
+            # pad_size = [160, 160, 64]
+            pad_size = [320, 320, 176]
+        elif args.dataset == 'spleen':
+            NUM_CLASS = 2
+            window_r = 7
+            # pad_size = [512, 512, 176]
+            pad_size = [256, 256, 64]
+        elif args.dataset == 'colon':
+            NUM_CLASS = 2
+            window_r = 5
+            pad_size = [256, 256, 64]
+            #pad_szie = [512, 512, 208]
+        pad_size = correct_padsize(pad_size=pad_size, downsample_rate=downsample_rate)
+        train_dataloader, test_dataloader, _= msd.MSD_dataloader(args.dataset, args.bsize, pad_size, args.num_workers, datapath=MSD_PATH, tr_percent=0.2, testseg=1, testreg=0)
         
     elif args.dataset=='brats': #not proper for registration?
         pad_size = [240, 240, 160]
@@ -121,18 +149,17 @@ if __name__ == "__main__":
         # Mahesh : Should the mumber of classes be one more than total number of classes? As required for some of the loss functions etc. >> No Need, 
         # we are not using any other loss function such as cross entropy loss which takes in number of classes as an arguemnt.
         NUM_CLASS = 5
-
     ##BUILD MODEL##
-    if args.tsraft:
-        down_flatten = 32//(2**args.down)
-        model = TsRaftRegNet(size=pad_size, corr_radius=args.corr, iters=args.iters, corr_levels=1,  downsample=args.down,
-            down_flatten=down_flatten, upconv=args.upconv, winsize = window_r, dim = 3, n_class=NUM_CLASS).cuda()
-    elif args.msraft:
-        model = MsRaftRegNet(size=pad_size, corr_radius=args.corr, winsize = window_r, ks_loss=args.ksloss, mode=args.msraft, n_class=NUM_CLASS).cuda()
-    elif args.raft:
-        model = RaftRegNet(size=pad_size, corr_radius=args.corr, iters=1, downsample=3, winsize = window_r, dim = 3, n_class=NUM_CLASS).cuda()
-    else:
-        model = RegNet(pad_size, winsize = window_r, dim = 3, n_class=NUM_CLASS, feat=args.feat).cuda()
+    # if args.tsraft:
+    #     down_flatten = 32//(2**args.down)
+    #     model = TsRaftRegNet(size=pad_size, corr_radius=args.corr, iters=args.iters, corr_levels=1,  downsample=args.down,
+    #         down_flatten=down_flatten, upconv=args.upconv, winsize = window_r, dim = 3, n_class=NUM_CLASS).cuda()
+    # elif args.msraft:
+    #     model = MsRaftRegNet(size=pad_size, corr_radius=args.corr, winsize = window_r, ks_loss=args.ksloss, mode=args.msraft, n_class=NUM_CLASS).cuda()
+    # elif args.raft:
+    #     model = RaftRegNet(size=pad_size, corr_radius=args.corr, iters=1, downsample=3, winsize = window_r, dim = 3, n_class=NUM_CLASS).cuda()
+    # else:
+    model = RegNet(pad_size, winsize = window_r, dim = 3, n_class=NUM_CLASS, feat=args.feat).cuda()
     if len(gpu)>1: #only valid on deepbull/deepbull2
         model = torch.nn.DataParallel(model, device_ids=gpu)
         # model = torch.nn.parallel.DistributedDataParallel(model, device_ids=gpu)

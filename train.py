@@ -78,11 +78,14 @@ class TrainModel():
     def train_epoch(self, optimizer, scheduler, epoch):
         epoch_train_dice = AverageMeter()
         self.model.train()
+        idx = 0
         for n_iter, samples in enumerate(self.train_dataloader):
-            if n_iter>0:
-                continue
+            # if n_iter>0:
+            #     continue
             fixed, fixed_label, moving, moving_label, fixed_nopad = self.data_extract(samples)
             self.global_idx += 1
+            logging.info(f'iteration={idx}/{len(self.train_dataloader)}')
+            idx+=1
             loss, trdice = self.trainIter(fixed, moving, fixed_label, moving_label, fixed_nopad=fixed_nopad)
             optimizer.zero_grad()
             loss.backward()
