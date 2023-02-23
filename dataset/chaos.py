@@ -237,7 +237,7 @@ class ChaosDataset(Dataset):
         
         # Mahesh : Q. Should we normalize the images ? What other processing is needed here?
         #normalize
-        print('******', np.max(data), np.min(data))
+        # print('******', np.max(data), np.min(data))
         mean = np.mean(data)
         std = np.std(data, ddof=1)
         maxp = mean + 6*std
@@ -266,8 +266,8 @@ class ChaosDataset(Dataset):
         return data, nopad
     
     def __getitem__(self, index):
-        # i = self.pairs[index] # TODO revert mack by uncommentung this line.
-        i = self.pairs[0] # Just for debugging using same pair of fixed and moving images over and over epochs.
+        i = self.pairs[index] # TODO revert mack by uncommentung this line.
+        # i = self.pairs[0] # Just for debugging using same pair of fixed and moving images over and over epochs.
         movingimg, moving_nopad = self.preprocess_img(self.imgpath[i[0]], pad=self.pad, pad_sz=self.size)
         fixedimg, fixed_nopad = self.preprocess_img(self.imgpath[i[1]], pad=self.pad, pad_sz=self.size)
         assert(movingimg.shape==fixedimg.shape)
@@ -275,8 +275,9 @@ class ChaosDataset(Dataset):
             moving_seg = self.preprocess_seg(self.segpath[i[0]], pad=self.pad, pad_sz=self.size)
             fixed_seg = self.preprocess_seg(self.segpath[i[1]], pad=self.pad, pad_sz=self.size)
             assert(fixed_seg.shape==moving_seg.shape)
-            return fixedimg, fixed_seg, fixed_nopad, movingimg, moving_seg, index 
-        return fixedimg, fixed_nopad, movingimg, index
+            return fixedimg, fixed_seg, fixed_nopad, movingimg, moving_seg
+        # return fixedimg, fixed_nopad, movingimg, index
+        return fixedimg, fixed_seg, fixed_nopad, movingimg, moving_seg
     
     def __len__(self):
         return self.num_samples
@@ -302,7 +303,7 @@ class ChaosDataset(Dataset):
 
 def Chaos_dataloader(root_path, bsize, tr_path, tst_path, tr_modality, tr_phase, tst_modality, tst_phase, 
                      size=[400, 400, 50], data_split=False, n_fix=1, num_workers = 1, augment=True, pad=True, 
-                     tr_num_samples=None, tst_num_samples=10):
+                     tr_num_samples=0, tst_num_samples=0):
     if(data_split):
         train_rootpath = root_path + 'CHAOS_Train_Sets/Train_Sets/MR'
         validation_rootpath = root_path + 'CHAOS_Test_Sets/Test_Sets/MR'
