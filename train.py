@@ -21,8 +21,8 @@ class TrainModel():
             savepath = f'ckpts/{args.logfile}'
         else:
             savepath = f'ckpts/vm'
-        if not os.path.isdir(savepath):
-            os.makedirs(savepath)
+        # if not os.path.isdir(savepath):
+        #     os.makedirs(savepath)
         self.savepath = savepath
         #
     def trainIter(self, fix, moving, fixed_label, moving_label, fixed_nopad=None): 
@@ -43,29 +43,32 @@ class TrainModel():
             self.tb.add_scalar("train/Dice", dice.item(), self.global_idx)
         return loss,dice
 
-    def data_extract(self, samples):
+    def data_extract(self, samples, device=torch.device(type='cuda', index=0)):
         if len(samples)==4:
             fixed, fixed_label, moving, moving_label = samples
             fixed_nopad = None
         elif len(samples)==5:
-            fixed, fixed_label, fixed_nopad, moving, moving_label = samples
+            fixed, fixed_label, fixed_nopad, moving, moving_label = samples  
+        elif len(samples) == 6:
+            fixed, fixed_label, moving, moving_label, _, _ = samples    
+            fixed_nopad = None      
         #
-        fixed = torch.unsqueeze(fixed,1).float().cuda()
-        moving = torch.unsqueeze(moving,1).float().cuda()
-        fixed_label = fixed_label.float().cuda()
+        fixed = torch.unsqueeze(fixed,1).float().to(device)
+        moving = torch.unsqueeze(moving,1).float().to(device)
+        fixed_label = fixed_label.float().to(device)
         # import ipdb; ipdb.set_trace()
         fixed_label = torch.nn.functional.one_hot(fixed_label.long(), num_classes=self.n_class).float().permute(0,4,1,2,3)
-        moving_label = moving_label.float().cuda()
+        moving_label = moving_label.float().to(device)
         moving_label = torch.nn.functional.one_hot(moving_label.long(), num_classes=self.n_class).float().permute(0,4,1,2,3)
         if fixed_nopad is not None:
-            fixed_nopad = fixed_nopad.float().cuda()[:, None]
+            fixed_nopad = fixed_nopad.to(device)[:, None]
         return fixed, fixed_label, moving, moving_label, fixed_nopad
 
     def test(self, epoch):
         tst_dice = AverageMeter()
         self.model.eval()
         for _, samples in enumerate(self.test_dataloader):
-            fixed, fixed_label, moving, moving_label, fixed_nopad = self.data_extract(samples)
+            fixed, fixed_label, moving, moving_label, fixed_nopad = self.data_extract(samples, device=self.model.device)
             with torch.no_grad():
                 dice = self.model.forward(fixed, moving,  fixed_label, moving_label, fixed_nopad, rtloss=False, eval=True)
             dice = dice.mean()
@@ -82,7 +85,7 @@ class TrainModel():
         for n_iter, samples in enumerate(self.train_dataloader):
             # if n_iter>0:
             #     continue
-            fixed, fixed_label, moving, moving_label, fixed_nopad = self.data_extract(samples)
+            fixed, fixed_label, moving, moving_label, fixed_nopad = self.data_extract(samples, self.model.device)
             self.global_idx += 1
             logging.info(f'iteration={idx}/{len(self.train_dataloader)}')
             idx+=1
