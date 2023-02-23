@@ -120,8 +120,8 @@ def run_parallel(rank, pad_size, window_r, NUM_CLASS, train_dataloader, test_dat
     setup(rank, world_size, args.port)
     # print(f"Rank {rank} Time taken 2:" + str(time.process_time() - start))    
 
-    writer_comment = os.path.join(args.logfile, '/tb')#'_'.join(['vm','un'+str(args.uncert), str(args.weight), args.logfile]) 
-    tb = SummaryWriter(comment = writer_comment)
+    writer_logdir = os.path.join(args.logfile, 'tb')#'_'.join(['vm','un'+str(args.uncert), str(args.weight), args.logfile]) 
+    tb = SummaryWriter(log_dir= writer_logdir)
 
     ##BUILD MODEL##
     # start = time.process_time()
@@ -195,7 +195,7 @@ if __name__ == "__main__":
             pad_size = [256, 256, 64]
             #pad_szie = [512, 512, 208]
         pad_size = correct_padsize(pad_size=pad_size, downsample_rate=downsample_rate)
-        train_dataloader, test_dataloader, _= msd.MSD_dataloader(args.dataset, args.bsize, pad_size, args.num_workers, datapath=MSD_PATH, tr_percent=1, testseg=1, testreg=0)
+        train_dataloader, test_dataloader, _= msd.MSD_dataloader(args.dataset, args.bsize, pad_size, args.num_workers, datapath=MSD_PATH, tr_percent=0.02, testseg=1, testreg=0)
     elif args.dataset=='brats': #not proper for registration?
         pad_size = [240, 240, 160]
         NUM_CLASS = 4 #including background 

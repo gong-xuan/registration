@@ -51,7 +51,7 @@ class Learn2Reg(Dataset):
     #     return z
 
     def preprocess_img(self, name):
-        x = np.array(nibabel.load(name).get_fdata())
+        x = np.array(nibabel.load(name).get_fdata(), dtype='float32')
         pos = np.all(x>=0)
         mean = np.mean(x)
         std = np.std(x, ddof=1)
@@ -70,7 +70,7 @@ class Learn2Reg(Dataset):
         return z
     
     def preprocess_seg(self, name):
-        data = np.array(nibabel.load(name).get_fdata())
+        data = np.array(nibabel.load(name).get_fdata(), dtype='float32')
         return data
             
     def __getitem__(self, idx):

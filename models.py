@@ -202,7 +202,7 @@ class RegNet(nn.Module):
             if fix_nopad is not None:
                 fix = fix*fix_nopad
                 warp = warp*fix_nopad
-            sim_loss, sim_mask = ncc_loss(warp,fix, reduce_mean=False, winsize=self.winsize) #[0,1]
+            sim_loss, sim_mask = ncc_loss(warp, fix, reduce_mean=False, winsize=self.winsize) #[0,1]
             grad_loss = gradient_loss(flow, keepdim=False).mean()
             if fix_nopad is not None:
                 mask = fix_nopad.bool()

@@ -317,10 +317,10 @@ def pad(x, shape):
     s_x = math.floor((shape[0] - x.shape[0])/2)
     s_y = math.floor((shape[1] - x.shape[1])/2)
     s_z = math.floor((shape[2] - x.shape[2])/2)
-    new_x = np.zeros(shape)
+    new_x = np.zeros(shape, dtype='float32')
     new_x[s_x:s_x+x.shape[0],s_y: s_y + x.shape[1], s_z:s_z + x.shape[2]] = x
     #save_index = [s_x, x.shape[0], s_y, x.shape[1], s_z, x.shape[2]]
-    nopad = np.zeros_like(new_x)
+    nopad = np.zeros_like(new_x, dtype='float32')
     nopad[s_x:s_x+x.shape[0],s_y: s_y + x.shape[1], s_z:s_z + x.shape[2]] = 1
     return new_x, nopad
 
@@ -343,7 +343,7 @@ def normalize(x):
     return z
 
 def preprocess(name, padsize = (48,64,48), isimg=False): #resample=[1,1,1], 
-    image = np.array(nibabel.load(name).get_fdata())
+    image = np.array(nibabel.load(name).get_fdata(), dtype='float32')
     if isimg:
         image = normalize(image)
     # if image.shape != tuple(padsize) :
