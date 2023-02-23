@@ -18,7 +18,7 @@ class TrainModel():
         self.printfreq=50
         #
         if args.logfile:
-            savepath = f'ckpts/{args.logfile}'
+            savepath = os.path.join(args.logfile, 'ckpts')
         else:
             savepath = f'ckpts/vm'
         # if not os.path.isdir(savepath):

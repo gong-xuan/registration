@@ -45,8 +45,8 @@ def get_args():
     # parser.add_argument('--savefrequency', type=int, default=1, help='savefrequency')
     # parser.add_argument('--testfrequency', type=int, default=1, help='testfrequency')
     parser.add_argument('--gpu', default='0', type=str, help='GPU device ID (default: -1)')
-    parser.add_argument('--logfile', default='', type=str)
-    parser.add_argument('--log', default='./logs/', type=str)
+    parser.add_argument('--port', default='12345', type=str, help='Port for vommunivating multi-gpu proccessing')
+    parser.add_argument('--logfile', default='./logs/', type=str)
     parser.add_argument('--weight', type=str, default='1,0.01,1', help='weight for imgsim, grad, segsim')
     # parser.add_argument('--uncert', type=int, default=0)
     # parser.add_argument('--dual', action='store_true')
@@ -71,9 +71,9 @@ def get_args():
     parser.add_argument('--tst_phase', type=str, default='InPhase', help='test phase')
     return parser.parse_args()
 
-def setup(rank, world_size):
+def setup(rank, world_size, port):
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12356'
+    os.environ['MASTER_PORT'] = port
 
     # initialize the process group
     dist.init_process_group("gloo", rank=rank, world_size=world_size)
@@ -83,7 +83,7 @@ def cleanup():
 
 def create_logger(args, window_r):
     if args.debug:
-        logfile = os.path.join(args.log, "logs_wnidow_{}.txt".format(window_r))
+        logfile = os.path.join(args.logfile, "logs_window_{}.txt".format(window_r))
     else:
         logfile = os.path.join(args.logfile, f'{datetime.now().strftime("%m%d%H%M")}.txt')
     logger = multiprocessing.get_logger()
@@ -117,16 +117,12 @@ def run_parallel(rank, pad_size, window_r, NUM_CLASS, train_dataloader, test_dat
     # print(f"Rank {rank} Time taken 1:" + str(time.process_time() - start))
     
     # start = time.process_time()
-    setup(rank, world_size)
-    # print(f"Rank {rank} Time taken 2:" + str(time.process_time() - start))
-    
-    if not args.debug:
-        writer_comment = f'{args.logfile}'#'_'.join(['vm','un'+str(args.uncert), str(args.weight), args.logfile]) 
-        tb = SummaryWriter(comment = writer_comment)
-    else:
-        writer_comment = os.path.join(args.log, '/tb')#'_'.join(['vm','un'+str(args.uncert), str(args.weight), args.logfile]) 
-        tb = SummaryWriter(comment = writer_comment)
-    
+    setup(rank, world_size, args.port)
+    # print(f"Rank {rank} Time taken 2:" + str(time.process_time() - start))    
+
+    writer_comment = os.path.join(args.logfile, '/tb')#'_'.join(['vm','un'+str(args.uncert), str(args.weight), args.logfile]) 
+    tb = SummaryWriter(comment = writer_comment)
+
     ##BUILD MODEL##
     # start = time.process_time()
     model = RegNet(pad_size, winsize=window_r, dim=3, n_class=NUM_CLASS).to(rank)
@@ -151,12 +147,12 @@ if __name__ == "__main__":
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     args.weight = [float(i) for i in args.weight.split(',')]
     
-    if args.log:
-        args.log = os.path.join(args.log, args.dataset, datetime.now().strftime("%m_%d_%y_%H_%M"))
-        if not os.path.isdir(args.log):
-            os.makedirs(args.log)
-    if args.log:
-        savepath = os.path.join(args.log, 'ckpts')
+    if args.logfile:
+        args.logfile = os.path.join(args.logfile, args.dataset, datetime.now().strftime("%m_%d_%y_%H_%M"))
+        if not os.path.isdir(args.logfile):
+            os.makedirs(args.logfile)
+    if args.logfile:
+        savepath = os.path.join(args.logfile, 'ckpts')
     else:
         savepath = f'ckpts/vm'
     if not os.path.exists(savepath):
