@@ -24,9 +24,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from multiprocessing import Pool
 
 
-CANDI_PATH = '/data_local/mbhosale/CANDI_split'
-MSD_PATH = '/a2il/data/MedReg/MSD'
-# MSD_PATH = '/a2il/data/mbhosale/MSD_resampled/'
+CANDI_PATH = '/a2il/data/mbhosale//CANDI_split'
+# MSD_PATH = '/a2il/data/mbhosale/MSD/'
+MSD_PATH = '/a2il/data/mbhosale/MSD_resampled/' # for clon and spleen datasets use resampled path
 # BraTS_PATH = '/data_local/xuangong/data/BraTS'
 CHAOS_PATH = r'/a2il/data/mbhosale/CHAOS_preprocessed/'
 L2R_DATAPATH = r'/a2il/data/mbhosale/learn2reg/AbdomenMRCT/'
@@ -62,7 +62,6 @@ def get_args():
     parser.add_argument('--down', type=int, default=1)
     parser.add_argument('--iters', type=int, default=1)
     parser.add_argument('--upconv', action='store_true')
-    # parser.add_argument('--feat', action='store_true')
     parser.add_argument('--mod', type=str, default='t1') #modality for BraTS: t1, t2, t1ce, flair
     parser.add_argument('--eval', type=int, default=1)
     parser.add_argument('--tr_modality', type=str, default='T1DUAL', help='train modality')
@@ -125,8 +124,9 @@ def run_parallel(rank, pad_size, window_r, NUM_CLASS, train_dataloader, test_dat
 
     ##BUILD MODEL##
     # start = time.process_time()
-    model = RegNet(pad_size, winsize=window_r, dim=3, n_class=NUM_CLASS).to(rank)
-    ddp_model = DDP(model, device_ids=[rank], output_device = rank, find_unused_parameters=True)
+
+    model = RegNet(pad_size, winsize = window_r, dim = 3, n_class=NUM_CLASS, feat=args.feat).to(rank)
+    ddp_model = DDP(model, device_ids=[rank], output_device = rank)
     train = TrainModel(ddp_model, train_dataloader, test_dataloader, args, NUM_CLASS, tb=tb)
     # print(f"Rank {rank} Time taken 3:" + str(time.process_time() - start))
     train.run()
@@ -143,6 +143,7 @@ def correct_padsize(pad_size, downsample_rate):
     
 if __name__ == "__main__":
     args = get_args()
+    torch.cuda.empty_cache()
     downsample_rate = 16
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     args.weight = [float(i) for i in args.weight.split(',')]
@@ -170,11 +171,11 @@ if __name__ == "__main__":
         if args.dataset=='prostate':
             NUM_CLASS = 3
             window_r = 9
-            pad_size = [240,240,96] 
+            pad_size = [240, 240, 96] 
         elif args.dataset == 'hippocampus': 
             NUM_CLASS = 3
             window_r = 5
-            pad_size = [48,64,48]
+            pad_size = [48, 64, 48]
         elif args.dataset == 'liver':
             NUM_CLASS = 3
             window_r = 9
@@ -186,7 +187,7 @@ if __name__ == "__main__":
             pad_size = [320, 320, 176]
         elif args.dataset == 'spleen':
             NUM_CLASS = 2
-            window_r = 7
+            window_r = 5
             # pad_size = [512, 512, 176]
             pad_size = [256, 256, 64]
         elif args.dataset == 'colon':
@@ -195,7 +196,7 @@ if __name__ == "__main__":
             pad_size = [256, 256, 64]
             #pad_szie = [512, 512, 208]
         pad_size = correct_padsize(pad_size=pad_size, downsample_rate=downsample_rate)
-        train_dataloader, test_dataloader, _= msd.MSD_dataloader(args.dataset, args.bsize, pad_size, args.num_workers, datapath=MSD_PATH, tr_percent=0.02, testseg=1, testreg=0)
+        train_dataloader, test_dataloader, _= msd.MSD_dataloader(args.dataset, args.bsize, pad_size, args.num_workers, datapath=MSD_PATH, tr_percent=0.1, testseg=1, testreg=0)
     elif args.dataset=='brats': #not proper for registration?
         pad_size = [240, 240, 160]
         NUM_CLASS = 4 #including background 

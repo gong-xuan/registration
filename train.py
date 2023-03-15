@@ -6,6 +6,11 @@ from losses import *
 from torch.optim import Adam, SGD
 from torch.optim.lr_scheduler import StepLR
 from uncert.snapshot import CyclicCosAnnealingLR
+from models import RegNet
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
+from collections import OrderedDict
+from test import TestModel
 
 class TrainModel():
     def __init__(self, model, train_dataloader, test_dataloader, args, n_class, tb=None):
@@ -35,7 +40,7 @@ class TrainModel():
         dice = dice.mean()
         if self.global_idx%self.printfreq ==0:
             logging.info(f'simloss={sim_loss}, gradloss={grad_loss}, segloss={seg_loss}, loss={loss}, dice={dice}')
-        if self.tb is not None:
+        if self.tb is not None and dist.get_rank() == 0:
             self.tb.add_scalar("train/loss", loss.item(), self.global_idx)
             self.tb.add_scalar("train/grad_loss", grad_loss.item(), self.global_idx)
             self.tb.add_scalar("train/sim_loss", sim_loss.item(), self.global_idx)
@@ -67,14 +72,22 @@ class TrainModel():
     def test(self, epoch):
         tst_dice = AverageMeter()
         self.model.eval()
+        idx = 0
         for _, samples in enumerate(self.test_dataloader):
-            fixed, fixed_label, moving, moving_label, fixed_nopad = self.data_extract(samples, device=self.model.device)
+            if self.model.__class__.__module__ == 'torch.nn.parallel.distributed':
+                fixed, fixed_label, moving, moving_label, fixed_nopad = self.data_extract(samples, device=self.model.device)
+            else:
+                fixed, fixed_label, moving, moving_label, fixed_nopad = self.data_extract(samples)
             with torch.no_grad():
                 dice = self.model.forward(fixed, moving,  fixed_label, moving_label, fixed_nopad, rtloss=False, eval=True)
+                # dice2 = self.model.forward(fixed, moving,  fixed_label, moving_label, fixed_nopad, rtloss=False, eval=True)
+            logging.info(f'iteration={idx}/{len(self.test_dataloader)}')
+            logging.info(f'test dice={(dice.item()*100):2f}')
+            idx+=1
             dice = dice.mean()
             tst_dice.update(dice.item())
         #epoch
-        if self.tb is not None:
+        if self.tb is not None and dist.get_rank() == 0:
             self.tb.add_scalar("test/dice", tst_dice.avg, epoch)
         return tst_dice.avg
     
@@ -82,9 +95,11 @@ class TrainModel():
         epoch_train_dice = AverageMeter()
         self.model.train()
         idx = 0
+        # print("Here1 " + str(dist.get_rank()))
         for n_iter, samples in enumerate(self.train_dataloader):
             # if n_iter>0:
             #     continue
+            # print("Here2 " + str(dist.get_rank()))
             fixed, fixed_label, moving, moving_label, fixed_nopad = self.data_extract(samples, self.model.device)
             self.global_idx += 1
             logging.info(f'iteration={idx}/{len(self.train_dataloader)}')
@@ -99,19 +114,86 @@ class TrainModel():
                     
             epoch_train_dice.update(trdice.item())       
         #epoch
-        
-        if self.tb is not None:
+        # print("Here3 " + str(dist.get_rank()))
+        if self.tb is not None and dist.get_rank() == 0:
             self.tb.add_scalar("train/dice", epoch_train_dice.avg, epoch)
         
         #validate per epoch
         # import ipdb; ipdb.set_trace()
-        if self.test_dataloader is not None:
+        
+        if self.test_dataloader is not None and dist.get_rank() == 0:
+            
+            # print("Original test")
             dice = self.test(epoch)
+            # dice_repeat = self.test(epoch)
+            # print("Here4 " + str(dist.get_rank()))
+            # Save and test the loaded the model. #TODO just for debug, remove it later.
+            # savename = 'checkpoint1.ckpt'
+            # torch.save(self.model.state_dict(), savename)
+            # print("Here5 " + str(dist.get_rank()))
+            
+            # model1 = RegNet([240, 240, 96] , winsize=self.model.module.winsize, dim=3, n_class=self.model.module.n_class).to(0)
+            # print("Here6 " + str(dist.get_rank()))
+            # model1 = DDP(model1, device_ids=[0], output_device = 0, find_unused_parameters=True)
+            # print("Here7 " + str(dist.get_rank()))
+            # d = torch.load(savename)
+            # # Skip loading the spatial transformer, as the train and test datasets are different.
+            # d = {k: v for k, v in d.items() if k !='spatial_transformer_network.meshgrid'}
+            # model1.load_state_dict(d, strict=False)
+            # model1.eval()
+            # old_model = self.model
+            # self.model = model1
+            # # print(self.model.state_dict()['module.unet.enc.0.main.weight'] == old_model.state_dict()['module.unet.enc.0.main.weight'])
+            # print("Checkpoint1_test")
+            # checkpoint1_dice = self.test(epoch)
+            # print("Here8 " + str(dist.get_rank()))
+
+            # self.model = old_model
+                        
+            # Save and test the loaded the model. #TODO just for debug, remove it later.
+            # savename = 'checkpoint2.ckpt'
+            # torch.save(self.model.state_dict(), savename)
+            # model2 = RegNet([240, 240, 96] , winsize=self.model.module.winsize, dim=3, n_class=self.model.module.n_class, feat=True).to(0)
+            # # model2 = DDP(model2, device_ids=[0], output_device = 0, find_unused_parameters=True)
+            # d = torch.load(savename)
+            
+            # # Skip loading the spatial transformer, as the train and test datasets are different.
+            # new_state_dict = OrderedDict()
+            # for k, v in d.items():
+            #     name = k[7:] # remove 'module.' of DataParallel/DistributedDataParallel
+            #     new_state_dict[name] = v
+            # d = new_state_dict
+            # d = {k: v for k, v in d.items() if k !='spatial_transformer_network.meshgrid'}
+            # model2.load_state_dict(d, strict=False)
+            # model2 = load_dict(savepath=savename, model=model2)
+            # model2.eval()
+            # old_model = self.model
+            # self.model = model2
+            # print("Checkpoint2_test")
+            # checkpoint2_dice = self.test(epoch)
+            # self.model = old_model
+ 
+            crtest_dice = -1
             if dice>self.bestdice:
                 self.bestdice = dice
-                savename = os.path.join(self.savepath, f'{epoch}_{(dice*100):2f}.ckpt')
+                savename = os.path.join(self.savepath, f'{epoch}_{(dice*100):2f}.pth')
                 torch.save(self.model.state_dict(), savename)
-            logging.info(f'Epoch:{epoch}...TestDice:{(dice*100):2f}, Best{(self.bestdice*100):2f}')
+                
+                # # Save and test the loaded the model. #TODO just for debug, remove it later.
+                # model3 = RegNet([240, 240, 96] , winsize=self.model.module.winsize, dim=3, n_class=self.model.module.n_class).to(0)
+                # # model3 = DDP(model, device_ids=[0], output_device = 0, find_unused_parameters=True)
+                # d = torch.load(savename)
+                # # Skip loading the spatial transformer, as the train and test datasets are different.
+                # d = {k: v for k, v in d.items() if k !='spatial_transformer_network.meshgrid'}
+                # old_model = self.model
+                # model = load_dict(savepath=savename, model=model3)
+                # checkpoint_dice = self.test(epoch)
+                # self.model = old_model
+                test = TestModel(savename, [320, 320, 176], 5, self.test_dataloader, 2, True)
+                crtest_dice = test.test()
+                if crtest_dice != (dice):
+                    print("Discrepency!!")
+            logging.info(f'Epoch:{epoch}...TestDice:{(dice*100):2f}, TestDice:{(crtest_dice*100):2f}, Best{(self.bestdice*100):2f}')
 
     def run(self):#device=torch.device("cuda:0")
         if self.args.sgd:

@@ -187,10 +187,11 @@ class RegNet(nn.Module):
         return dice
 
     def forward(self, fix, moving, fix_label, moving_label, fix_nopad=None, rtloss=True, eval=True):
-        x = torch.cat([moving,fix], dim = 1)
+        x = torch.cat([moving, fix], dim = 1)
         unet_out = self.unet(x)
         flow = self.conv(unet_out)
-
+        # np.save('output2', flow.detach().cpu().numpy())
+        
         if rtloss:
             warp = self.spatial_transformer_network(moving, flow)
             warped_seg = self.spatial_transformer_network(moving_label, flow)

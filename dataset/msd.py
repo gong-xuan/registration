@@ -98,14 +98,16 @@ def MSD_dataloader(dataset, bsize, pad_size, num_workers, datapath='~/data/MSD',
         valseg_dataloader = torch.utils.data.DataLoader(
             val_seg_data,
             batch_size=bsize,
-            shuffle=True,
-            num_workers=num_workers)
+            shuffle=False,
+            num_workers=num_workers,
+            drop_last = False)
     if testreg:
         valreg_dataloader = torch.utils.data.DataLoader(
             val_reg_data,
             batch_size=bsize,
-            shuffle=True,
-            num_workers=num_workers) 
+            shuffle=False,
+            num_workers=num_workers,
+            drop_last = False) 
     return train_dataloader, valseg_dataloader, valreg_dataloader
 
 class NIIDatasetPaired(Dataset):
@@ -258,7 +260,7 @@ class NIIDatasetTestSeg(Dataset):
     def __getitem__(self,idx):
         f1 = self.filenames[idx]
         f2 = self.corres_names[idx]
-
+        # print("f"+str(f1).split("_")[1].split(".")[0]+"m"+str(f2).split("_")[1].split(".")[0])
         moving_data, _ = preprocess(os.path.join(self.imgpath, f1), isimg=True, padsize=self.pad_size)
         moving_label, _ = preprocess(os.path.join(self.labelpath, f1), isimg=False, padsize=self.pad_size) 
 
