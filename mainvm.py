@@ -25,8 +25,8 @@ from multiprocessing import Pool
 
 
 CANDI_PATH = '/a2il/data/mbhosale//CANDI_split'
-# MSD_PATH = '/a2il/data/mbhosale/MSD/'
-MSD_PATH = '/a2il/data/mbhosale/MSD_resampled/' # for clon and spleen datasets use resampled path
+MSD_PATH = '/a2il/data/mbhosale/MSD/'
+# MSD_PATH = '/a2il/data/mbhosale/MSD_resampled/' # for clon and spleen datasets use resampled path
 # BraTS_PATH = '/data_local/xuangong/data/BraTS'
 CHAOS_PATH = r'/a2il/data/mbhosale/CHAOS_preprocessed/'
 L2R_DATAPATH = r'/a2il/data/mbhosale/learn2reg/AbdomenMRCT/'
@@ -68,6 +68,9 @@ def get_args():
     parser.add_argument('--tst_modality', type=str, default='T1DUAL', help='test modality')
     parser.add_argument('--tr_phase', type=str, default='InPhase', help='train phase')
     parser.add_argument('--tst_phase', type=str, default='InPhase', help='test phase')
+    parser.add_argument('--save_config', type=bool, default=False)
+    parser.add_argument('--use_config', type=bool, default=True)
+    parser.add_argument('--save_seg', type=bool, default=False)
     return parser.parse_args()
 
 def setup(rank, world_size, port):
@@ -143,8 +146,11 @@ def correct_padsize(pad_size, downsample_rate):
     
 if __name__ == "__main__":
     args = get_args()
+    torch.multiprocessing.set_sharing_strategy('file_system') # handle large number of files. Increase the number of open files.
     torch.cuda.empty_cache()
     downsample_rate = 16
+    args.use_config = False
+    args.save_config = False
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     args.weight = [float(i) for i in args.weight.split(',')]
     
@@ -183,20 +189,17 @@ if __name__ == "__main__":
         elif args.dataset == 'heart':
             NUM_CLASS = 2
             window_r = 5
-            # pad_size = [160, 160, 64]
             pad_size = [320, 320, 176]
         elif args.dataset == 'spleen':
             NUM_CLASS = 2
             window_r = 5
-            # pad_size = [512, 512, 176]
             pad_size = [256, 256, 64]
         elif args.dataset == 'colon':
             NUM_CLASS = 2
             window_r = 5
             pad_size = [256, 256, 64]
-            #pad_szie = [512, 512, 208]
         pad_size = correct_padsize(pad_size=pad_size, downsample_rate=downsample_rate)
-        train_dataloader, test_dataloader, _= msd.MSD_dataloader(args.dataset, args.bsize, pad_size, args.num_workers, datapath=MSD_PATH, tr_percent=0.1, testseg=1, testreg=0)
+        train_dataloader, test_dataloader, _= msd.MSD_dataloader(args.dataset, args.bsize, pad_size, args.num_workers, datapath=MSD_PATH, tr_percent=1, testseg=1, testreg=0, save_config=args.save_config, use_config=args.use_config)
     elif args.dataset=='brats': #not proper for registration?
         pad_size = [240, 240, 160]
         NUM_CLASS = 4 #including background 

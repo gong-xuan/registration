@@ -4,6 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as nnf
 from losses import *
 import logging
+from utils import mk_grid_img, tensor2nii, flow_as_rgb
+import matplotlib.pyplot as plt
+import SimpleITK as sitk
 
 class SpatialTransformer(nn.Module):
     def __init__(self, size, mode='bilinear'):#nearest??
@@ -65,7 +68,7 @@ class unet_core(nn.Module):
     [unet_core] is a class representing the U-Net implementation that takes in
     a fixed image and a moving image and outputs a flow-field
     """
-    def __init__(self, dim=3, enc_nf=[16, 32, 32, 32], dec_nf= [32, 32, 32, 32, 32, 16, 16], downsample=0, input_ch=2):
+    def __init__(self, dim=3, enc_nf=[16, 32, 32, 32], dec_nf= [32, 32, 32, 32, 32, 16, 16], downsample=0, input_ch=2, return_enc=False):
         """
         Instiatiate UNet model
             :param dim: dimension of the image passed into the net
@@ -99,6 +102,7 @@ class unet_core(nn.Module):
         
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
         self.vm2_conv = conv_block(dim, dec_nf[5], dec_nf[6]) 
+        self.return_enc = return_enc
  
 
     def forward(self, x):
@@ -117,6 +121,10 @@ class unet_core(nn.Module):
                 x_enc.append(y)
             # logging.info(layer)
 
+        # save_enc output, for visualization if needed
+        if self.return_enc:
+           enc_out = y 
+        
         # Three conv + upsample + concatenate series
         # y = x_enc[-1]
         # import ipdb; ipdb.set_trace()
@@ -151,8 +159,10 @@ class unet_core(nn.Module):
         y = self.dec[-1](y)
         # Extra conv for vm2
         y = self.vm2_conv(y)
-
-        return y
+        if self.return_enc:
+            return y, enc_out
+        else:
+            return y
     
 
 class RegNet(nn.Module):
@@ -162,7 +172,7 @@ class RegNet(nn.Module):
                 n_class=29,
                 feat=False):
         super(RegNet, self).__init__()
-        self.unet = unet_core(dim=dim, enc_nf = enc_nf, dec_nf = dec_nf)
+        self.unet = unet_core(dim=dim, enc_nf = enc_nf, dec_nf = dec_nf, return_enc=True)
         if(dim == 3):
             conv_fn = nn.Conv3d
         else:
@@ -173,22 +183,65 @@ class RegNet(nn.Module):
         self.n_class = n_class
         #feat
         self.feat = feat
-        self.feat_conv= conv_fn(dec_nf[-1]+n_class, n_class, kernel_size = 3, stride = 1, padding = 1)
-        self.softmax = nn.Softmax(dim=1)
+        if self.feat:
+            self.feat_conv= conv_fn(dec_nf[-1]+n_class, n_class, kernel_size = 3, stride = 1, padding = 1)
+            self.softmax = nn.Softmax(dim=1)
         # self.drop = nn.Dropout(droprate)
 
 
-
-    def eval_dice_warped(self, fixed_label, warped_seg):
+    def eval_dice_warped(self, fixed_label, warped_seg, seg_fname=None, save_nii=False):
         warplabel = torch.max(warped_seg.detach(),dim=1)[1]
+        # print(torch.sum(warplabel))
         # import ipdb; ipdb.set_trace()
         warped_label = torch.nn.functional.one_hot(warplabel.long(), num_classes=self.n_class).float().permute(0,4,1,2,3)
+        # print(torch.sum(warped_label)) # Mahesh: This sum should reduce after taking one hot encoding, right?
+        # print(torch.sum(fixed_label))
+        # print(torch.sum(warped_label[:,1:,:,:,:]))
+        # print(torch.sum(fixed_label[:,1:,:,:,:]))
         dice = dice_onehot(warped_label[:,1:,:,:,:].detach(), fixed_label[:,1:,:,:,:].detach())#disregard background
+        
+        if save_nii:
+            fnames = []
+            fnames.append(seg_fname+"true_seg")
+            fnames.append(seg_fname+"pred_seg")
+            tensor2nii(pred=warped_label, true=fixed_label, fnames=fnames, mode='seg', one_hot=True)
+        # seg_fname = None # Temporary
+        if seg_fname is not None:
+            self.seg_imgs(warped_label, fixed_label, seg_fname, one_hot=True)
         return dice
 
-    def forward(self, fix, moving, fix_label, moving_label, fix_nopad=None, rtloss=True, eval=True):
+
+    def seg_imgs(self, y_pred, y_true, fname, one_hot=False):
+        if one_hot:
+           y_pred = torch.max(y_pred.detach(), dim=1)[1]
+           y_pred = y_pred.unsqueeze(0)
+           y_true = torch.max(y_true.detach(), dim=1)[1]
+           y_true = y_true.unsqueeze(0)
+        fig_rows = 4
+        fig_cols = 4
+        n_subplots = fig_rows * fig_cols
+        n_slice = y_true.shape[4]
+        step_size = n_slice // n_subplots
+        plot_range = n_subplots * step_size
+        start_stop = int((n_slice - plot_range) / 2)
+        fig, axs = plt.subplots(fig_rows, fig_cols, figsize=[10, 10])
+        y_true = np.array(y_true.detach().cpu().numpy()[0, 0, ...], dtype='float64')
+        y_pred = np.array(y_pred.detach().cpu().numpy()[0, 0, ...], dtype='float64')
+        y_true[ y_true==0 ] = np.nan
+        for idx, img in enumerate(range(start_stop, plot_range, step_size)):
+            axs.flat[idx].imshow(y_true[:, :, img])
+            axs.flat[idx].imshow(y_pred[:, :, img], alpha=0.8)
+            axs.flat[idx].axis('off')
+            
+        plt.tight_layout()
+        plt.savefig(fname)
+        plt.cla()
+        plt.close()
+
+    
+    def forward(self, fix, moving, fix_label, moving_label, fix_nopad=None, rtloss=True, eval=True, seg_fname=None):
         x = torch.cat([moving, fix], dim = 1)
-        unet_out = self.unet(x)
+        unet_out, enc_out = self.unet(x)
         flow = self.conv(unet_out)
         # np.save('output2', flow.detach().cpu().numpy())
         
@@ -216,6 +269,27 @@ class RegNet(nn.Module):
             warped_seg = torch.clamp(warped_seg, min=0, max=1)#required??
             seg_loss = tversky_loss(warped_seg, fix_label)
             
+            # Mahesh : If similarity loss is greater than 80%, we will convert tensors to nifti for visualization.
+            # if sloss*-1 >= 0.30:
+            #     fnames = []
+            #     fnames.append(seg_fname+"true.nii.gz")
+            #     fnames.append(seg_fname+"warp.nii.gz")
+            #     fnames.append(seg_fname+"flow.nii.gz")
+            #     grid_flow = None
+            #     # grid = mk_grid_img((400, 400, 64, 1, 3), 16, 1) 
+            #     grid = mk_grid_img((256, 256, 64, 1, 3), 16, 1) # Mahesh : #TODO Somehow flow.shape doesnt work because 
+            #     # max and min we get in flow_asrgb() both get value of 1. To overcome, passing hardcoded temporarily,
+            #     # the axis along which max() and min() is taken will fix the issue.
+            #     grid = np.moveaxis(grid, [3, 4], [-5, -4])
+            #     grid = torch.tensor(grid, device=flow.device, dtype=flow.dtype)
+            #     grid_flow = self.spatial_transformer_network(grid, flow)
+            #     grid_flow = grid_flow.squeeze(0)
+            #     if grid_flow is not None:
+            #         fnames.append(seg_fname+"grid_flow.png")
+            #     flow_as_rgb(grid_flow.detach().cpu().numpy(), 8, fname=fnames[-1])
+            #     tensor2nii(warp, fix, fnames, mode='volume', one_hot=True, flow=flow, grid_flow=None)
+            #     save_nii = True
+            
             if eval:
                 dice = self.eval_dice_warped(fix_label, warped_seg)
                 return sloss, grad_loss, seg_loss, dice
@@ -224,15 +298,55 @@ class RegNet(nn.Module):
         else:
             if eval:
                 warped_seg= self.spatial_transformer_network(moving_label, flow)
+                # print(torch.sum(warped_seg))
+                # print(torch.sum(torch.max(warped_seg.detach(),dim=1)[1]))
+                # print(torch.sum(fix_label))
+                # print(torch.sum(torch.max(fix_label.detach(),dim=1)[1]))
                 if self.feat:
-                    out_cat = torch.cat((warped_seg,unet_out), 1)
+                    out_cat = torch.cat((warped_seg, unet_out), 1)
                     out_cat = self.feat_conv(out_cat)
                     warped_seg = self.softmax(out_cat)
+                # print(torch.sum(warped_seg))
+                # print(torch.sum(torch.max(warped_seg.detach(),dim=1)[1]))
                 if fix_nopad is not None:
                     fix_label = fix_nopad*fix_label
                     warped_seg = fix_nopad*warped_seg
-                
-                dice = self.eval_dice_warped(fix_label, warped_seg)
+                # print(torch.sum(warped_seg))
+                # print(torch.sum(torch.max(warped_seg.detach(),dim=1)[1]))
+                # print(torch.sum(fix_label))
+                # print(torch.sum(torch.max(fix_label.detach(),dim=1)[1]))
+                save_nii = False
+                if seg_fname:
+                    fnames = []
+                    fnames.append(seg_fname+"true.nii.gz")
+                    fnames.append(seg_fname+"warp.nii.gz")
+                    fnames.append(seg_fname+"flow.nii.gz")
+                    grid_flow = None
+                    # grid_shape = (flow.shape[2], flow.shape[3], flow.shape[4], flow.shape[0], flow.shape[1])
+                    # grid = mk_grid_img(grid_shape, 16, 1)
+                    grid = mk_grid_img((240, 240, 96, 1, 3), 4, 1) # Mahesh : #TODO Somehow flow.shape doesnt work because 
+                    # max and min we get in flow_as_rgb() both get value of 1. To overcome, passing hardcoded temporarily,
+                    # the axis along which max() and min() is taken will fix the issue. But it still works if you set it some arbitary value, only
+                    # used for flow images.
+                    grid = np.moveaxis(grid, [3, 4], [-5, -4])
+                    grid = torch.tensor(grid, device=flow.device, dtype=flow.dtype)
+                    grid_flow = self.spatial_transformer_network(grid, flow)
+                    grid_flow = grid_flow.squeeze(0)
+                    if grid_flow is not None:
+                        fnames.append(seg_fname+"grid_flow.png")
+                    warp = self.spatial_transformer_network(moving, flow)
+                    if fix_nopad is not None:
+                        fix = fix*fix_nopad
+                        warp = warp*fix_nopad
+                    flow_as_rgb(grid_flow.detach().cpu().numpy(), 8, fname=fnames[-1])
+                    tensor2nii(warp, fix, fnames, mode='volume', one_hot=True, flow=flow, grid_flow=None)
+                    
+                    # save the enc_output
+                    enc_output = sitk.GetImageFromArray(enc_out.detach().cpu().numpy())
+                    sitk.WriteImage(enc_output, seg_fname+"enc_out.nii.gz")
+                    
+                    save_nii = True
+                dice = self.eval_dice_warped(fix_label, warped_seg, seg_fname=seg_fname, save_nii=save_nii)
                 return dice
             else:
                 return flow

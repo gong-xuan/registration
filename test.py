@@ -34,10 +34,12 @@ def get_args():
     parser.add_argument('--checkpoint')
     parser.add_argument('--num_workers', default=4, type=int)
     parser.add_argument('--feat', action='store_true')
+    parser.add_argument('--save_config', type=bool, default=False)
+    parser.add_argument('--use_config', type=bool, default=True)
     return parser.parse_args()
 
 class TestModel():
-    def __init__(self, ckpt_file, padsize, win_size, test_dataloader, n_class, feat):
+    def __init__(self, ckpt_file, padsize, win_size, test_dataloader, n_class, feat, logdir):
         self.test_dataloader = test_dataloader
         self.n_class = n_class
         model = RegNet(padsize, winsize=win_size, dim=3, n_class=n_class, feat=feat).cuda()
@@ -51,8 +53,11 @@ class TestModel():
         # model.load_state_dict(d, strict=False)
         model = load_dict(ckpt_file, model)
         self.model = model
+        self.logdir = logdir
 
     def data_extract(self, samples):
+        seg_fname = samples[-1][0]
+        samples = samples[:-1]
         # doesnt support multi GPU tests
         if len(samples)==4:
             fixed, fixed_label, moving, moving_label = samples
@@ -73,7 +78,7 @@ class TestModel():
         if fixed_nopad is not None:
             fixed_nopad = fixed_nopad.float().cuda()[:, None]
             fixed_label = fixed_nopad * fixed_label
-        return fixed, fixed_label, moving, moving_label, fixed_nopad
+        return fixed, fixed_label, moving, moving_label, fixed_nopad, seg_fname
     
     # def test(self):
     #     tst_dice = AverageMeter()
@@ -91,32 +96,44 @@ class TestModel():
     #         idx+=1
     #     logging.info(f'Average test dice= {tst_dice.avg}')
     
-    def test(self):
+    def test(self, save_seg=False):
         tst_dice = AverageMeter()
         self.model.eval()
         idx = 0
-        torch.save(self.model.state_dict(), 'test_checkpoint1.pth')
+        # torch.save(self.model.state_dict(), 'test_checkpoint1.pth')
         for _, samples in enumerate(self.test_dataloader):
-            fixed, fixed_label, moving, moving_label, fixed_nopad = self.data_extract(samples)
+            fixed, fixed_label, moving, moving_label, fixed_nopad, seg_fname = self.data_extract(samples)
+            if save_seg:
+                assert seg_fname
+                if not os.path.isdir(os.path.join(self.logdir, "seg_imgs")):
+                    os.makedirs(os.path.join(self.logdir, "seg_imgs"))
+                seg_fname = os.path.join(self.logdir, "seg_imgs", seg_fname)
+            else:
+                seg_fname = None
             with torch.no_grad():
-                dice = self.model.forward(fixed, moving,  fixed_label, moving_label, fixed_nopad, rtloss=False, eval=True)
+                dice = self.model.forward(fixed, moving,  fixed_label, moving_label, fixed_nopad, rtloss=False, eval=True, seg_fname=seg_fname)
                 # dice2 = self.model.forward(fixed, moving,  fixed_label, moving_label, fixed_nopad, rtloss=False, eval=True)
             dice = dice.mean()
             logging.info(f'iteration={idx}/{len(self.test_dataloader)}')
             logging.info(f'test dice={(dice.item()*100):2f}')
             idx+=1
             tst_dice.update(dice.item())
-        torch.save(self.model.state_dict(), 'test_checkpoint2.pth')
+        # torch.save(self.model.state_dict(), 'test_checkpoint2.pth')
         logging.info(f'Average test dice= {(tst_dice.avg*100):2f}')
         return tst_dice.avg
 
 if __name__ == "__main__":
     args = get_args()
+    torch.cuda.empty_cache()
     # print(args)
+    # there's some issue with passing the values of parameters such as use_config .. which only takes True no matter what. therefore setting it hardcoded for now.
+    args.use_config = True
+    args.save_config = False
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-    if not os.path.isdir(args.log):
-            os.makedirs(args.log)
-    logfile = os.path.join(args.log, "train_"+ args.train_dataset + "_test_" + args.test_dataset + "_" + datetime.now().strftime("%m_%d_%y_%H_%M")+".txt")
+    logdir = os.path.join(args.log, "train_"+ args.train_dataset + "_test_" + args.test_dataset + "_" + datetime.now().strftime("%m_%d_%y_%H_%M"))
+    if not os.path.isdir(logdir):
+            os.makedirs(logdir)
+    logfile = os.path.join(logdir, "log.txt")
     handlers = [logging.StreamHandler()]
     handlers.append(logging.FileHandler(
         logfile, mode='a'))
@@ -133,22 +150,28 @@ if __name__ == "__main__":
         if args.test_dataset == "hippocampus":
             tst_pad_size = [48, 64, 48]
             window_r = 5
+            NUM_CLASS = 3
         elif args.test_dataset == "liver":
             tst_pad_size = [256, 256, 128]
             window_r = 9
+            NUM_CLASS = 3
         elif args.test_dataset == "prostate":
             tst_pad_size = [240, 240, 96]
             window_r = 9
+            NUM_CLASS = 3
         elif args.test_dataset == "heart":
             tst_pad_size = [320, 320, 176]
             window_r = 5
+            NUM_CLASS = 2
         elif args.test_dataset == 'colon':
             tst_pad_size = [256, 256, 64]
             window_r = 5
+            NUM_CLASS = 2
         else:
             tst_pad_size = [256, 256, 64]
             window_r = 5
-        _, testseg_dataloader, _ = msd.MSD_dataloader(args.test_dataset, args.bsize, tst_pad_size, args.num_workers, datapath=test_datapath, tr_percent=1, testseg=1, testreg=0)
+            NUM_CLASS = 2
+        _, testseg_dataloader, _ = msd.MSD_dataloader(args.test_dataset, args.bsize, tst_pad_size, args.num_workers, datapath=test_datapath, tr_percent=1, testseg=1, testreg=0, train=0, save_config=args.save_config, use_config=args.use_config)
     elif args.test_dataset == "CANDI":
         test_datapath = CANDI_PATH
         tst_pad_size=[160, 160, 128]
@@ -160,24 +183,30 @@ if __name__ == "__main__":
         tr_pad_size = [160,160,128]
     elif args.train_dataset in ['prostate', 'hippocampus', 'liver', 'heart', 'colon', 'spleen']:
         if args.train_dataset == 'prostate':
-            NUM_CLASS = 3
+            if args.feat:
+                NUM_CLASS = 3
             tr_pad_size = [240, 240, 96] 
         elif args.train_dataset == 'hippocampus':
-            NUM_CLASS = 3
+            if args.feat:
+                NUM_CLASS = 3
             tr_pad_size = [48, 64, 48]
         elif args.train_dataset == 'liver':
-            NUM_CLASS = 3
+            if args.feat:
+                NUM_CLASS = 3
             tr_pad_sze = [256, 256, 128]
         elif args.train_dataset == 'heart':
-            NUM_CLASS = 2
+            if args.feat:
+                NUM_CLASS = 2
             tr_pad_size = [320, 320, 176]
         elif args.train_dataset == 'colon':
-            NUM_CLASS = 2
+            if args.feat:
+                NUM_CLASS = 2
             tr_pad_size = [256, 256, 64]
         else:
-            NUM_CLASS = 2
+            if args.feat:
+                NUM_CLASS = 2
             tr_pad_size = [256, 256, 64]
-    test = TestModel(args.checkpoint, tst_pad_size, window_r, testseg_dataloader, NUM_CLASS, args.feat)
+    test = TestModel(args.checkpoint, tst_pad_size, window_r, testseg_dataloader, NUM_CLASS, args.feat, logdir=logdir)
     
     # # Save and test the loaded the model. #TODO just for debug, remove it later.
     # savename = 'checkpoint1.ckpt'
@@ -189,7 +218,7 @@ if __name__ == "__main__":
     # d = {k: v for k, v in d.items() if k !='spatial_transformer_network.meshgrid'}
     # model1.load_state_dict(d, strict=False)
     
-    test.test()
+    test.test(save_seg=False) # Choose BS of 1.
     
     # Save and test the loaded the model. #TODO just for debug, remove it later.
     # savename = 'checkpoint2.ckpt'
